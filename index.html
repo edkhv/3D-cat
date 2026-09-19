@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Чёрный котик и мяч</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #05070a; overflow: hidden; }
+  body {
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    color: #dfe7ef;
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .hud {
+    position: fixed; left: 28px; bottom: 26px; pointer-events: none;
+    max-width: min(430px, 78vw);
+  }
+  .hud h1 {
+    margin: 0 0 6px; font-size: 19px; font-weight: 600; letter-spacing: .01em;
+  }
+  .hud p { margin: 0; color: #8ea3b8; font-size: 13.5px; }
+  .hud .k {
+    display: inline-block; padding: 1px 6px; margin: 0 2px; border-radius: 5px;
+    background: rgba(120, 220, 255, .12); color: #9fe8ff;
+    border: 1px solid rgba(120, 220, 255, .25); font-size: 12px;
+  }
+  .badge {
+    position: fixed; left: 28px; top: 24px; display: flex; gap: 10px; align-items: center;
+    font-size: 12px; color: #7f94a8; letter-spacing: .08em; text-transform: uppercase;
+  }
+  .badge .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #63e2ff;
+    box-shadow: 0 0 12px #63e2ff;
+  }
+  .stats {
+    position: fixed; right: 24px; bottom: 24px; font-size: 11.5px; color: #56697c;
+    text-align: right; line-height: 1.6; pointer-events: none;
+  }
+  .loader {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    background: #05070a; transition: opacity .6s ease; z-index: 5;
+  }
+  .loader.hide { opacity: 0; pointer-events: none; }
+  .loader .inner { text-align: center; color: #8ea3b8; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+  .loader .bar { width: 220px; height: 2px; margin: 14px auto 0; background: #16202b; overflow: hidden; }
+  .loader .bar i { display: block; height: 100%; width: 30%; background: #63e2ff; animation: slide 1.1s infinite ease-in-out; }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="badge"><span class="dot"></span> fur demo · three.js</div>
+
+<div class="hud">
+  <h1>Котик гоняется за мячиком</h1>
+  <p>Ведите мышью (или пальцем) — мяч побежит за курсором, а кот за мячом.
+     Приблизившись, он бьёт лапой, и мяч отлетает. <span class="k">клик</span> — пнуть мяч самому,
+     <span class="k">R</span> — сброс.</p>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="loader" id="loader"><div class="inner">загрузка кота<div class="bar"><i></i></div></div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/"
+  }
+}
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>

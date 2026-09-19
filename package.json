@@ -1,0 +1,12 @@
+{
+  "name": "3d-cat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Чёрный котик с мехом (three.js fur shells) гоняется за мячиком, который следует за курсором",
+  "scripts": {
+    "dev": "python3 -m http.server 5173",
+    "serve": "python3 -m http.server 5173"
+  },
+  "keywords": ["three.js", "webgl", "fur", "cat", "blender", "gltf"],
+  "license": "MIT"
+}
