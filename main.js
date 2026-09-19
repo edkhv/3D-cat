@@ -111,13 +111,14 @@ const ballTarget = new THREE.Vector3(0.45, BALL_R, 0.35);
 const ndc = new THREE.Vector2(0.35, 0.15);
 const ray = new THREE.Raycaster();
 const planeY = new THREE.Plane(new THREE.Vector3(0, 1, 0), -BALL_R);
-let pointerActive = false;
+let pointerActive = false;   // до первого движения мыши кот просто сидит
 
 function pointerMove(e) {
   const t = e.touches ? e.touches[0] : e;
   ndc.x = (t.clientX / innerWidth) * 2 - 1;
   ndc.y = -(t.clientY / innerHeight) * 2 + 1;
   pointerActive = true;
+  window.catDemo && (window.catDemo.active = true);
 }
 addEventListener('pointermove', pointerMove, { passive: true });
 addEventListener('touchmove', pointerMove, { passive: true });
@@ -281,7 +282,7 @@ window.catDemo = {
   ball, catRoot,
   get state() { return state; },
   get speed() { return catSpeed; },
-  setPointer(nx, ny) { ndc.set(nx, ny); pointerActive = true; },
+  setPointer(nx, ny) { ndc.set(nx, ny); pointerActive = true; userActive = true; },
   snap() {
     return {
       state, speed: +catSpeed.toFixed(2),
@@ -295,7 +296,7 @@ window.catDemo = {
   },
   reset() {
     ball.position.set(0.45, BALL_R, 0.35); ballVel.set(0, 0, 0);
-    catPos.set(0, 0, 0); catYaw = 0; state = 'idle';
+    catPos.set(0, 0, 0); catYaw = 0; state = 'idle'; userActive = false; pointerActive = false;
   },
 };
 
@@ -303,7 +304,10 @@ window.catDemo = {
 const clock = new THREE.Clock();
 let fps = 60, frames = 0, fpsT = 0;
 
+let userActive = false;
+
 function updateBall(dt) {
+  if (!userActive) return;                       // мяч спит, пока не двинули курсором
   ray.setFromCamera(ndc, camera);
   const hit = new THREE.Vector3();
   if (ray.ray.intersectPlane(planeY, hit)) {
@@ -333,6 +337,14 @@ function updateBall(dt) {
 
 function updateCat(dt) {
   if (!mixer) return;
+  userActive = userActive || pointerActive;
+  if (!userActive) {                              // ждём первого движения курсора
+    actIdle.setEffectiveWeight(1);
+    actRun.setEffectiveWeight(0);
+    catRoot.rotation.y = catYaw;
+    mixer.update(dt);
+    return;
+  }
   const toBall = new THREE.Vector3().subVectors(ball.position, catPos).setY(0);
   const dist = toBall.length();
   const wantYaw = Math.atan2(-toBall.z, toBall.x);   // модель смотрит в +X
@@ -419,10 +431,6 @@ addEventListener('resize', () => {
 
 addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') {
-    ball.position.set(0.45, BALL_R, 0.35);
-    ballVel.set(0, 0, 0);
-    catPos.set(0, 0, 0);
-    catYaw = 0;
-    state = 'idle';
+    window.catDemo.reset();
   }
 });

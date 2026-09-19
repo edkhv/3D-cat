@@ -74,8 +74,23 @@ blender -b --factory-startup --python blender/web_build_cat.py
 
 ## Деплой
 
-Статика, никакой сборки: Vercel отдаёт корень репозитория как есть.
+Живёт на Vercel: **https://3d-cat.vercel.app** (проект `3d-cat`, аккаунт `edkhv`).
+
+Статика, никакой сборки: Vercel отдаёт корень репозитория как есть,
 `vercel.json` добавляет длинный `Cache-Control` для `models/` и `vendor/`.
+
+```bash
+npx vercel link --project 3d-cat   # один раз
+npm run deploy                     # vercel --prod
+```
+
+Автодеплой по push в `main` включается в два шага:
+
+1. GitHub → Settings → Applications → **Vercel** → Configure → Repository access →
+   добавить репозиторий `3D-cat` (приложение Vercel должно его видеть);
+2. в папке проекта выполнить `npx vercel git connect https://github.com/edkhv/3D-cat`.
+
+После этого каждый push в `main` собирает продакшн, а PR-ы получают preview-URL.
 
 ## Лицензия
 
