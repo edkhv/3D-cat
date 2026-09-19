@@ -81,37 +81,115 @@ def build_skin():
 
 
 # --------------------------------------------------- 2. eyes / nose / whiskers
+# Look of the eye for the web model.  Everything the site needs to read as a
+# real cat eye is geometry + flat materials, because glTF drops node graphs:
+#   * eyeball sunk deeper into the socket, so less of the sphere sticks out
+#   * iris built from three concentric bands -> amber-green centre and a dark
+#     limbal ring, like the Cycles `mat_iris()` ramp of the render model
+#   * vertical slit pupil instead of a round dot
+#   * a thin lid rim (torus) that fills the socket and reads as an eyelid
+EYE_SINK = 0.54          # eyeball centre pulled back along fwd (x EYE_R)
+IRIS_ANG = 60.0          # iris cap semi-angle (deg)
+PUPIL_H, PUPIL_V = 10.5, 26.0
+COR_ANG, COR_MUL = 50.0, 1.018
+LID_R, LID_T = 0.94, 0.0042      # lid ring radius / tube (x EYE_R / m)
+LID_PUSH = 0.24          # lid ring centre along fwd (x EYE_R)
+LID_SQUASH = 0.78        # <1 -> the aperture is wider than it is tall
+
+
+def band_cap(objs, name, radius, fwd, c, ang, mats, bounds, rings=9, segs=40):
+    """Elliptical cap around fwd, material picked per ring band (centre -> out)."""
+    bm = bc.patch_cap(radius, fwd, ang, ang, rings=rings, segs=segs)
+    bmesh.ops.translate(bm, vec=c, verts=bm.verts)
+    o = bc.new_obj_from_bm(name, bm)
+    for m in mats:
+        o.data.materials.append(m)
+    # patch_cap puts the boundary at atan(sin(ang)), not at ang itself
+    lim = math.atan(math.sin(math.radians(ang)))
+    for p in o.data.polygons:
+        t = max(-1.0, min(1.0, (p.center - c).normalized().dot(fwd)))
+        a = math.acos(t) / lim
+        p.material_index = 0
+        for i, b in enumerate(bounds):
+            if a <= b:
+                p.material_index = i
+                break
+    bc.shade_smooth(o, 60)
+    objs.append(o)
+    return o
+
+
 def build_face(cat):
-    m_sclera = bc.mat_simple("EyeSclera", (0.020, 0.017, 0.015), rough=0.35, spec=0.4)
-    m_iris = bc.mat_simple("EyeIris", (0.42, 0.50, 0.10), rough=0.22, spec=0.6)
-    m_pupil = bc.mat_simple("EyePupil", (0.008, 0.008, 0.010), rough=0.12, spec=0.7)
-    m_cornea = bc.mat_simple("EyeCornea", (1, 1, 1), rough=0.03, spec=0.5, transmission=1.0, ior=1.376)
+    m_sclera = bc.mat_simple("EyeSclera", (0.010, 0.009, 0.009), rough=0.45, spec=0.25)
+    m_iris_deep = bc.mat_simple("EyeIrisDeep", (0.13, 0.17, 0.045), rough=0.24, spec=0.5)
+    m_iris = bc.mat_simple("EyeIris", (0.34, 0.42, 0.09), rough=0.22, spec=0.55)
+    m_iris_in = bc.mat_simple("EyeIrisInner", (0.52, 0.58, 0.15), rough=0.20, spec=0.55)
+    m_rim = bc.mat_simple("EyeIrisOuter", (0.030, 0.045, 0.012), rough=0.30, spec=0.5)
+    m_pupil = bc.mat_simple("EyePupil", (0.004, 0.004, 0.005), rough=0.15, spec=0.35, coat=0.1)
+    m_cornea = bc.mat_simple("EyeCornea", (1, 1, 1), rough=0.04, spec=0.15, ior=1.376)
     # glTF has no transmission here -> give the cornea explicit alpha instead
     cb = m_cornea.node_tree.nodes["Principled BSDF"]
-    bc.set_input(cb, "Alpha", 0.28)
+    bc.set_input(cb, "Alpha", 0.10)
     m_cornea.blend_method = 'BLEND' if hasattr(m_cornea, "blend_method") else m_cornea.blend_method
+    m_lid = bc.mat_simple("CatBlack", (0.016, 0.015, 0.015), rough=0.92, spec=0.15)
+    m_glint = bc.mat_simple("EyeGlint", (1, 1, 1), rough=0.05, spec=0.9)
+    gb = m_glint.node_tree.nodes["Principled BSDF"]
+    bc.set_input(gb, "Emission Color", (1.0, 1.0, 1.0, 1.0))
+    bc.set_input(gb, "Emission Strength", 0.25)
     objs = []
     for s in (1, -1):
         fwd = Vector((bc.EYE_DIR.x, bc.EYE_DIR.y * s, bc.EYE_DIR.z)).normalized()
-        c = Vector((bc.EYE_C.x, bc.EYE_C.y * s, bc.EYE_C.z)) - fwd * (bc.EYE_R * 0.30)
+        c = Vector((bc.EYE_C.x, bc.EYE_C.y * s, bc.EYE_C.z)) - fwd * (bc.EYE_R * EYE_SINK)
+        ref = Vector((0, 0, 1)) if abs(fwd.z) < 0.9 else Vector((1, 0, 0))
+        right = fwd.cross(ref).normalized()
+        up = right.cross(fwd).normalized()
+
         bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=14, radius=bc.EYE_R)
+        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=20, radius=bc.EYE_R)
         bmesh.ops.translate(bm, vec=c, verts=bm.verts)
         o = bc.new_obj_from_bm("EyeBall_%d" % s, bm)
         o.data.materials.append(m_sclera)
         bc.shade_smooth(o, 60)
         objs.append(o)
-        for key, (rmul, ya, za, mat) in {
-            "iris": (1.0040, 63.0, 63.0, m_iris),
-            "pupil": (1.0085, 32.0, 37.0, m_pupil),
-            "cornea": (1.050, 74.0, 74.0, m_cornea),
-        }.items():
-            bm = bc.patch_cap(bc.EYE_R * rmul, fwd, ya, za, rings=5, segs=28)
-            bmesh.ops.translate(bm, vec=c, verts=bm.verts)
-            o = bc.new_obj_from_bm("%s_%d" % (key, s), bm)
-            o.data.materials.append(mat)
-            bc.shade_smooth(o, 60)
-            objs.append(o)
+
+        # iris: deep olive around the pupil -> green -> amber ring -> dark limbal rim
+        band_cap(objs, "Iris_%d" % s, bc.EYE_R * 1.003, fwd, c, IRIS_ANG,
+                 [m_iris_deep, m_iris, m_iris_in, m_rim], (0.36, 0.70, 0.90, 1.02))
+
+        # vertical slit pupil
+        bm = bc.patch_cap(bc.EYE_R * 1.007, fwd, PUPIL_H, PUPIL_V, rings=5, segs=40)
+        bmesh.ops.translate(bm, vec=c, verts=bm.verts)
+        o = bc.new_obj_from_bm("Pupil_%d" % s, bm)
+        o.data.materials.append(m_pupil)
+        bc.shade_smooth(o, 60)
+        objs.append(o)
+
+        # thin cornea + baked catchlight (upper-left of the iris)
+        bm = bc.patch_cap(bc.EYE_R * COR_MUL, fwd, COR_ANG, COR_ANG, rings=6, segs=40)
+        bmesh.ops.translate(bm, vec=c, verts=bm.verts)
+        o = bc.new_obj_from_bm("Cornea_%d" % s, bm)
+        o.data.materials.append(m_cornea)
+        bc.shade_smooth(o, 60)
+        objs.append(o)
+
+        gdir = (fwd + up * 0.46 + right * 0.28).normalized()
+        bm = bc.patch_cap(bc.EYE_R * 1.032, gdir, 4.5, 4.5, rings=3, segs=20)
+        bmesh.ops.translate(bm, vec=c, verts=bm.verts)
+        o = bc.new_obj_from_bm("Glint_%d" % s, bm)
+        o.data.materials.append(m_glint)
+        bc.shade_smooth(o, 60)
+        objs.append(o)
+
+        # eyelid rim: fills the socket and hides the sphere/head seam
+        bm = bmesh.new()
+        bc.torus_ring(bm, bc.EYE_R * LID_R, LID_T, seg=48, ring=14, squash=LID_SQUASH)
+        rot = Vector((1, 0, 0)).rotation_difference(fwd).to_matrix().to_4x4()
+        bmesh.ops.transform(bm, matrix=rot, verts=bm.verts)
+        bmesh.ops.translate(bm, vec=c + fwd * (bc.EYE_R * LID_PUSH), verts=bm.verts)
+        o = bc.new_obj_from_bm("Eyelid_%d" % s, bm)
+        o.data.materials.append(m_lid)
+        bc.shade_smooth(o, 60)
+        objs.append(o)
 
     m_nose = bc.mat_simple("NoseLeather", (0.0115, 0.0105, 0.0110), rough=0.34, spec=0.55, coat=0.35)
     p, n = bc.snap(cat, bc.NOSE_TIP)

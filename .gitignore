@@ -1,5 +1,8 @@
 .DS_Store
 node_modules
 .vercel
+blender/__pycache__/
+__pycache__/
+*.blend
 *.blend1
 .env*

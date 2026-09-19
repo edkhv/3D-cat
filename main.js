@@ -150,7 +150,22 @@ float vnoise(vec3 x){ vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * 
                  mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y), f.z); }
 `;
 
-function furMaterial(layer, layers) {
+// Мех — оболочки: 17 мм ворса заведомо выше глаз (они торчат на 4 мм) и носа,
+// поэтому в шейдер передаются «дырки» — сферы вокруг радужек и носовой кожи.
+const FUR_HOLES_MAX = 4;
+const HOLE_GLSL = `
+uniform vec4 uFurHoles[${FUR_HOLES_MAX}];
+float furHoleMask(vec3 p) {
+  float m = 1.0;
+  for (int i = 0; i < ${FUR_HOLES_MAX}; i++) {
+    vec4 h = uFurHoles[i];
+    if (h.w > 0.0) m = min(m, smoothstep(h.w * 0.80, h.w * 1.45, distance(p, h.xyz)));
+  }
+  return m;
+}
+`;
+
+function furMaterial(layer, layers, holes) {
   const u = layer / (layers - 1);            // 0 = кожа, 1 = кончики
   const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff, vertexColors: true, roughness: 0.86, metalness: 0.0,
@@ -158,27 +173,36 @@ function furMaterial(layer, layers) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uLayer = { value: u };
     shader.uniforms.uFurLen = { value: FUR_LEN };
+    shader.uniforms.uFurHoles = { value: (holes || []).concat(
+      Array.from({ length: FUR_HOLES_MAX }, () => new THREE.Vector4(0, 0, 0, 0))).slice(0, FUR_HOLES_MAX) };
     shader.vertexShader = `
       uniform float uLayer; uniform float uFurLen;
       varying vec3 vFurPos_;
+      varying vec3 vFurDisp_;
       ${GLSL_NOISE}
+      ${HOLE_GLSL}
       ` + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
        vFurPos_ = position;
+       float fmask = furHoleMask(position);
        float nv = vnoise(position * 420.0);
-       transformed += objectNormal * (uLayer * uFurLen * (0.55 + 0.65 * nv));`
+       transformed += objectNormal * (uLayer * uFurLen * (0.55 + 0.65 * nv) * fmask);
+       vFurDisp_ = transformed;`
     );
     shader.fragmentShader = `
       uniform float uLayer; uniform float uFurLen;
       varying vec3 vFurPos_;
+      varying vec3 vFurDisp_;
       ${GLSL_NOISE}
+      ${HOLE_GLSL}
       ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <color_fragment>',
       `float fn = vnoise(vFurPos_ * 430.0) * 0.58 + vnoise(vFurPos_ * 1150.0) * 0.42;
-       float cut = pow(uLayer, 1.7) * 0.88;
+       float fmask = furHoleMask(vFurDisp_);
+       float cut = mix(1.05, pow(uLayer, 1.7) * 0.88, fmask);
        if (fn < cut) discard;
        float ear = clamp(1.0 - vColor.g, 0.0, 1.0);      // 1 = кожа, >0 = внутренняя сторона уха
        vec3 root = vec3(0.0042, 0.0042, 0.0048);
@@ -189,6 +213,43 @@ function furMaterial(layer, layers) {
     );
   };
   return mat;
+}
+
+// дырки в мехе берём прямо из геометрии морды: центры радужек и носовой кожи
+// (вершины в bind-пространстве, как и у CatBody — оба меша дети арматуры)
+function collectFurHoles(model) {
+  const holes = [];
+  const face = model.getObjectByName('CatFace');
+  if (!face) return holes;
+  face.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const pos = o.geometry.attributes.position;
+    const idx = o.geometry.index;
+    // glTF-примитивы three грузит отдельными Mesh (тогда групп нет) — поддерживаем оба случая
+    const groups = (o.geometry.groups && o.geometry.groups.length)
+      ? o.geometry.groups
+      : [{ start: 0, count: idx ? idx.count : pos.count, materialIndex: 0 }];
+    for (const g of groups) {
+      const m = mats[g.materialIndex];
+      if (!m) continue;
+      const scale = /Iris/i.test(m.name) ? 1.02 : (/Nose/i.test(m.name) ? 1.20 : 0);
+      if (!scale) continue;
+      const c = new THREE.Vector3();
+      for (let i = g.start; i < g.start + g.count; i++) {
+        const vi = idx ? idx.getX(i) : i;
+        c.x += pos.getX(vi); c.y += pos.getY(vi); c.z += pos.getZ(vi);
+      }
+      c.multiplyScalar(1 / Math.max(1, g.count));
+      let r = 0;
+      for (let i = g.start; i < g.start + g.count; i++) {
+        const vi = idx ? idx.getX(i) : i;
+        r = Math.max(r, Math.hypot(pos.getX(vi) - c.x, pos.getY(vi) - c.y, pos.getZ(vi) - c.z));
+      }
+      if (r > 0) holes.push(new THREE.Vector4(c.x, c.y, c.z, r * scale));
+    }
+  });
+  return holes.slice(0, FUR_HOLES_MAX);
 }
 
 // ------------------------------------------------------------------ cat
@@ -217,11 +278,14 @@ new GLTFLoader().load('./models/cat.glb', (gltf) => {
   catFace = model.getObjectByName('CatFace');
 
   // мех: базовый слой + раздутые копии (клоны делят скелет => общая анимация)
+  const furHoles = collectFurHoles(model);
+  if (location.hash === '#face') loaderEl.classList.add('hide');
+  window.__furHoles = furHoles.map((h) => [h.x, h.y, h.z, h.w].map((v) => +v.toFixed(4)));
   if (catBody) {
     const bodyMeshes = [];
     catBody.traverse((o) => { if (o.isMesh) bodyMeshes.push(o); });
     for (const m of bodyMeshes) {
-      m.material = furMaterial(0, FUR_LAYERS);
+      m.material = furMaterial(0, FUR_LAYERS, furHoles);
       m.castShadow = true;
       m.receiveShadow = false;
       m.frustumCulled = false;
@@ -231,7 +295,7 @@ new GLTFLoader().load('./models/cat.glb', (gltf) => {
       const shell = catBody.clone();
       shell.traverse((o) => {
         if (!o.isMesh) return;
-        o.material = furMaterial(i, FUR_LAYERS);
+        o.material = furMaterial(i, FUR_LAYERS, furHoles);
         o.castShadow = i < 3;
         o.receiveShadow = false;
         o.frustumCulled = false;
@@ -248,12 +312,12 @@ new GLTFLoader().load('./models/cat.glb', (gltf) => {
     for (const m of list) {
       if (/Iris/i.test(m.name)) {
         m.emissive = new THREE.Color(0x2a3a06);
-        m.emissiveIntensity = 0.9;
+        m.emissiveIntensity = 0.45;
         m.roughness = 0.22;
       }
       if (/Pupil/i.test(m.name)) { m.roughness = 0.12; }
       if (/Cornea/i.test(m.name)) {
-        m.transparent = true; m.opacity = 0.22; m.depthWrite = false;
+        m.transparent = true; m.opacity = 0.12; m.depthWrite = false;
         m.roughness = 0.05; m.metalness = 0.0; m.color = new THREE.Color(0xffffff);
       }
       if (/Whisker/i.test(m.name)) { m.color = new THREE.Color(0xb9bcb4); m.roughness = 0.35; }
@@ -411,6 +475,10 @@ function tick() {
   camera.position.y += ((camBase.y + py) - camera.position.y) * 0.05;
   camera.position.z += ((camBase.z + px * 0.4) - camera.position.z) * 0.05;
   camera.lookAt(camLook);
+  if (location.hash === '#face') {          // отладочный ракурс: морда крупно
+    camera.position.set(0.60, 0.335, 0.155);
+    camera.lookAt(0.228, 0.288, 0.0);
+  }
 
   renderer.render(scene, camera);
 
