@@ -95,6 +95,7 @@ COR_ANG, COR_MUL = 50.0, 1.018
 LID_R, LID_T = 0.94, 0.0042      # lid ring radius / tube (x EYE_R / m)
 LID_PUSH = 0.24          # lid ring centre along fwd (x EYE_R)
 LID_SQUASH = 0.78        # <1 -> the aperture is wider than it is tall
+EYE_SCALE = float(os.environ.get("CAT_EYE_SCALE", "0.85"))   # размер глаза (шар/радужка/веко)
 
 
 def band_cap(objs, name, radius, fwd, c, ang, mats, bounds, rings=9, segs=40):
@@ -137,15 +138,16 @@ def build_face(cat):
     bc.set_input(gb, "Emission Color", (1.0, 1.0, 1.0, 1.0))
     bc.set_input(gb, "Emission Strength", 0.25)
     objs = []
+    R_EYE = bc.EYE_R * EYE_SCALE
     for s in (1, -1):
         fwd = Vector((bc.EYE_DIR.x, bc.EYE_DIR.y * s, bc.EYE_DIR.z)).normalized()
-        c = Vector((bc.EYE_C.x, bc.EYE_C.y * s, bc.EYE_C.z)) - fwd * (bc.EYE_R * EYE_SINK)
+        c = Vector((bc.EYE_C.x, bc.EYE_C.y * s, bc.EYE_C.z)) - fwd * (R_EYE * EYE_SINK)
         ref = Vector((0, 0, 1)) if abs(fwd.z) < 0.9 else Vector((1, 0, 0))
         right = fwd.cross(ref).normalized()
         up = right.cross(fwd).normalized()
 
         bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=20, radius=bc.EYE_R)
+        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=20, radius=R_EYE)
         bmesh.ops.translate(bm, vec=c, verts=bm.verts)
         o = bc.new_obj_from_bm("EyeBall_%d" % s, bm)
         o.data.materials.append(m_sclera)
@@ -153,11 +155,11 @@ def build_face(cat):
         objs.append(o)
 
         # iris: deep olive around the pupil -> green -> amber ring -> dark limbal rim
-        band_cap(objs, "Iris_%d" % s, bc.EYE_R * 1.003, fwd, c, IRIS_ANG,
+        band_cap(objs, "Iris_%d" % s, R_EYE * 1.003, fwd, c, IRIS_ANG,
                  [m_iris_deep, m_iris, m_iris_in, m_rim], (0.36, 0.70, 0.90, 1.02))
 
         # vertical slit pupil
-        bm = bc.patch_cap(bc.EYE_R * 1.007, fwd, PUPIL_H, PUPIL_V, rings=5, segs=40)
+        bm = bc.patch_cap(R_EYE * 1.007, fwd, PUPIL_H, PUPIL_V, rings=5, segs=40)
         bmesh.ops.translate(bm, vec=c, verts=bm.verts)
         o = bc.new_obj_from_bm("Pupil_%d" % s, bm)
         o.data.materials.append(m_pupil)
@@ -165,7 +167,7 @@ def build_face(cat):
         objs.append(o)
 
         # thin cornea + baked catchlight (upper-left of the iris)
-        bm = bc.patch_cap(bc.EYE_R * COR_MUL, fwd, COR_ANG, COR_ANG, rings=6, segs=40)
+        bm = bc.patch_cap(R_EYE * COR_MUL, fwd, COR_ANG, COR_ANG, rings=6, segs=40)
         bmesh.ops.translate(bm, vec=c, verts=bm.verts)
         o = bc.new_obj_from_bm("Cornea_%d" % s, bm)
         o.data.materials.append(m_cornea)
@@ -173,7 +175,7 @@ def build_face(cat):
         objs.append(o)
 
         gdir = (fwd + up * 0.46 + right * 0.28).normalized()
-        bm = bc.patch_cap(bc.EYE_R * 1.032, gdir, 4.5, 4.5, rings=3, segs=20)
+        bm = bc.patch_cap(R_EYE * 1.032, gdir, 4.5, 4.5, rings=3, segs=20)
         bmesh.ops.translate(bm, vec=c, verts=bm.verts)
         o = bc.new_obj_from_bm("Glint_%d" % s, bm)
         o.data.materials.append(m_glint)
@@ -182,10 +184,10 @@ def build_face(cat):
 
         # eyelid rim: fills the socket and hides the sphere/head seam
         bm = bmesh.new()
-        bc.torus_ring(bm, bc.EYE_R * LID_R, LID_T, seg=48, ring=14, squash=LID_SQUASH)
+        bc.torus_ring(bm, R_EYE * LID_R, LID_T * EYE_SCALE, seg=48, ring=14, squash=LID_SQUASH)
         rot = Vector((1, 0, 0)).rotation_difference(fwd).to_matrix().to_4x4()
         bmesh.ops.transform(bm, matrix=rot, verts=bm.verts)
-        bmesh.ops.translate(bm, vec=c + fwd * (bc.EYE_R * LID_PUSH), verts=bm.verts)
+        bmesh.ops.translate(bm, vec=c + fwd * (R_EYE * LID_PUSH), verts=bm.verts)
         o = bc.new_obj_from_bm("Eyelid_%d" % s, bm)
         o.data.materials.append(m_lid)
         bc.shade_smooth(o, 60)

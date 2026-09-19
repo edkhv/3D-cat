@@ -202,7 +202,9 @@ function furMaterial(layer, layers, holes) {
       '#include <color_fragment>',
       `float fn = vnoise(vFurPos_ * 430.0) * 0.58 + vnoise(vFurPos_ * 1150.0) * 0.42;
        float fmask = furHoleMask(vFurDisp_);
-       float cut = mix(1.05, pow(uLayer, 1.7) * 0.88, fmask);
+       float cut = pow(uLayer, 1.7) * 0.88;
+       // слой 0 — это кожа, её не режем никогда: в «дырках» гасим только ворс
+       if (uLayer > 1e-4) cut = mix(1.05, cut, fmask);
        if (fn < cut) discard;
        float ear = clamp(1.0 - vColor.g, 0.0, 1.0);      // 1 = кожа, >0 = внутренняя сторона уха
        vec3 root = vec3(0.0042, 0.0042, 0.0048);
