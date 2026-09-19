@@ -159,7 +159,7 @@ float furHoleMask(vec3 p) {
   float m = 1.0;
   for (int i = 0; i < ${FUR_HOLES_MAX}; i++) {
     vec4 h = uFurHoles[i];
-    if (h.w > 0.0) m = min(m, smoothstep(h.w * 0.80, h.w * 1.45, distance(p, h.xyz)));
+    if (h.w > 0.0) m = min(m, smoothstep(h.w * 0.88, h.w * 1.25, distance(p, h.xyz)));
   }
   return m;
 }
@@ -217,12 +217,49 @@ function furMaterial(layer, layers, holes) {
   return mat;
 }
 
-// дырки в мехе берём прямо из геометрии морды: центры радужек и носовой кожи
-// (вершины в bind-пространстве, как и у CatBody — оба меша дети арматуры)
+// дырки в мехе берём прямо из геометрии морды: по одной сфере на радужку и на
+// носовую кожу. Радужки обоих глаз лежат в одном glTF-примитиве, поэтому считаем
+// не центроид группы (он попал бы между глазами), а связные островки геометрии.
+function geometryIslands(start, count, idx, pos) {
+  const parent = new Map();
+  const find = (a) => { while (parent.get(a) !== a) { parent.set(a, parent.get(parent.get(a))); a = parent.get(a); } return a; };
+  const add = (a) => { if (!parent.has(a)) parent.set(a, a); };
+  const v = (i) => (idx ? idx.getX(i) : i);
+  for (let i = start; i < start + count; i += 3) {
+    const a = v(i), b = v(i + 1), c = v(i + 2);
+    add(a); add(b); add(c);
+    let ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+    ra = find(b); rb = find(c);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  const byRoot = new Map();
+  for (const key of parent.keys()) {
+    const r = find(key);
+    if (!byRoot.has(r)) byRoot.set(r, []);
+    byRoot.get(r).push(key);
+  }
+  const out = [];
+  for (const verts of byRoot.values()) {
+    if (verts.length < 3) continue;
+    const c = new THREE.Vector3();
+    for (const i of verts) c.add(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)));
+    c.multiplyScalar(1 / verts.length);
+    let r = 0;
+    const p = new THREE.Vector3();
+    for (const i of verts) {
+      p.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+      r = Math.max(r, p.distanceTo(c));
+    }
+    out.push({ c, r });
+  }
+  return out;
+}
+
 function collectFurHoles(model) {
-  const holes = [];
   const face = model.getObjectByName('CatFace');
-  if (!face) return holes;
+  const found = [];
+  if (!face) return [];
   face.traverse((o) => {
     if (!o.isMesh || !o.geometry) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -235,23 +272,22 @@ function collectFurHoles(model) {
     for (const g of groups) {
       const m = mats[g.materialIndex];
       if (!m) continue;
-      const scale = /Iris/i.test(m.name) ? 1.02 : (/Nose/i.test(m.name) ? 1.20 : 0);
-      if (!scale) continue;
-      const c = new THREE.Vector3();
-      for (let i = g.start; i < g.start + g.count; i++) {
-        const vi = idx ? idx.getX(i) : i;
-        c.x += pos.getX(vi); c.y += pos.getY(vi); c.z += pos.getZ(vi);
+      const iris = /Iris/i.test(m.name), nose = /Nose/i.test(m.name);
+      if (!iris && !nose) continue;
+      const scale = iris ? 1.45 : 1.05;      // чуть шире самой радужки / носа
+      for (const isl of geometryIslands(g.start, g.count, idx, pos)) {
+        if (isl.r > 0) found.push(new THREE.Vector4(isl.c.x, isl.c.y, isl.c.z, isl.r * scale));
       }
-      c.multiplyScalar(1 / Math.max(1, g.count));
-      let r = 0;
-      for (let i = g.start; i < g.start + g.count; i++) {
-        const vi = idx ? idx.getX(i) : i;
-        r = Math.max(r, Math.hypot(pos.getX(vi) - c.x, pos.getY(vi) - c.y, pos.getZ(vi) - c.z));
-      }
-      if (r > 0) holes.push(new THREE.Vector4(c.x, c.y, c.z, r * scale));
     }
   });
-  return holes.slice(0, FUR_HOLES_MAX);
+  // колец радужки четыре, а глаз два: оставляем по одной (самой большой) сфере на глаз
+  found.sort((a, b) => b.w - a.w);
+  const holes = [];
+  for (const h of found) {
+    if (holes.length >= FUR_HOLES_MAX) break;
+    if (holes.every((k) => Math.hypot(h.x - k.x, h.y - k.y, h.z - k.z) > k.w * 0.9)) holes.push(h);
+  }
+  return holes;
 }
 
 // ------------------------------------------------------------------ cat
